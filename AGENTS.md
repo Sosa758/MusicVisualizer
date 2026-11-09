@@ -4,7 +4,7 @@ Guidance for agents working in this repository.
 
 ## What this is
 
-A Spotify web player with local-file playback and an empty WebGL scene, served at
+A Spotify web player with local-file playback and a 31-band GPU particle equalizer, served at
 **https://spotify.sh10151.uk** through a Cloudflare Tunnel.
 
 - **Backend:** Node 24 + Express 4, `server/index.js`, port **3100**, bound to `127.0.0.1`.
@@ -12,8 +12,8 @@ A Spotify web player with local-file playback and an empty WebGL scene, served a
   from `esm.sh` at runtime.
 - **State:** single user, single Spotify account. OAuth tokens persist in `.tokens.json`.
 
-The WebGL canvas is an empty cleared scene. Playback does not drive it. The previous
-particle visualizer is in git history (`fcf8c64`) and is not part of the running app.
+The WebGL canvas is a 31-band particle equalizer. Each particle belongs to one
+third-octave band, which sets its column, color, and speed.
 
 Do not introduce a bundler, a framework, or a build pipeline. The absence of a build step
 is deliberate — it keeps deploys to "edit a file, restart the service".
@@ -25,7 +25,7 @@ server/index.js      OAuth (PKCE), token refresh, Spotify API proxy, static serv
 public/index.html    Markup + the asset version query (see "Deploying changes")
 public/app.js        SDK init, UI wiring, queue, controls, boot()
 public/audio.js      Local file playback
-public/visualizer.js Empty Three.js WebGL scene
+public/visualizer.js 31-band GPU particle equalizer
 public/styles.css    Dark UI theme
 ```
 
@@ -84,8 +84,9 @@ response.
 
 ### `public/visualizer.js`
 
-`class Visualizer` owns a WebGL renderer, an empty scene, and a camera. It clears and
-draws every frame. It has no meshes and no audio uniforms.
+`class Visualizer` owns a WebGL2 renderer and a GPU ping-pong particle system.
+Particles form 31 equalizer columns. `uGravity` pulls them down and `uLife` is how
+fast they respawn. A half-resolution bloom pass runs after the points.
 
 ### Debug handles
 

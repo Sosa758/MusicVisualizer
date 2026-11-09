@@ -4,7 +4,7 @@
  */
 const V = new URL(import.meta.url).search;
 const { Visualizer } = await import(`./visualizer.js${V}`);
-const { FileAudio } = await import(`./audio.js${V}`);
+const { FileAudio, LiveAudio, AudioMotion } = await import(`./audio.js${V}`);
 
 const $ = (s) => document.querySelector(s);
 const api = (p, opts = {}) => fetch(`/api/spotify/${p}`, opts);
@@ -32,6 +32,8 @@ const state = {
 const viz = new Visualizer($('#scene'));
 $('#renderer-info').textContent = viz.backend;
 
+const live = new LiveAudio();
+live.onStop = () => paintLiveToggle();
 const fileAudio = new FileAudio($('#local-audio'));
 fileAudio.setVolume(state.volume);
 fileAudio.onTrack = ({ track, paused, progressMs, durationMs }) => {
@@ -52,6 +54,51 @@ fileAudio.onEnded = () => {
   if (state.source === 'local') fileAudio.next();
 };
 
+const motion = new AudioMotion();
+viz.onAudioTick = (dt) => {
+  const spec = state.source === 'local' ? fileAudio.tick() : live.tick();
+  return motion.sample(spec, dt);
+};
+
+function paintLiveToggle() {
+  const on = state.source === 'spotify' && live.ok;
+  const btn = $('#t-live');
+  if (btn) {
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-checked', String(on));
+  }
+  const share = $('#btn-share-audio');
+  if (share) {
+    share.textContent = on ? 'Tab audio on' : 'Share tab audio';
+    share.classList.toggle('on', on);
+    share.hidden = state.source !== 'spotify';
+  }
+}
+
+let shareInFlight = null;
+function shareTabAudio() {
+  if (state.source !== 'spotify') return Promise.resolve(false);
+  if (live.ok) {
+    if (live.probe?.ctx?.state === 'suspended') live.probe.ctx.resume();
+    paintLiveToggle();
+    return Promise.resolve(true);
+  }
+  if (shareInFlight) return shareInFlight;
+  shareInFlight = live.start().then(() => {
+    const hint = $('#device-hint');
+    if (hint) hint.textContent = 'Listening to this tab. The 31 bands follow the Spotify mix.';
+    paintLiveToggle();
+    return true;
+  }).catch((e) => {
+    paintLiveToggle();
+    if (e.code === 'no-audio') toast('In the share dialog, choose this tab and tick “Share tab audio”');
+    else if (e.code === 'unsupported') toast('This browser cannot share tab audio');
+    else toast('Choose this tab and tick “Share tab audio”');
+    return false;
+  }).finally(() => { shareInFlight = null; });
+  return shareInFlight;
+}
+
 function paintSourceMode() {
   const spotify = state.source === 'spotify';
   $('#mode-spotify')?.classList.toggle('on', spotify);
@@ -62,6 +109,9 @@ function paintSourceMode() {
   $('#local-lists')?.classList.toggle('hidden', spotify);
   $('#btn-shuffle')?.classList.toggle('hidden', !spotify);
   $('#btn-repeat')?.classList.toggle('hidden', !spotify);
+  const liveBtn = $('#t-live');
+  liveBtn?.closest('.toggle-row')?.classList.toggle('dimmed', !spotify);
+  paintLiveToggle();
 }
 
 async function setSource(mode) {
@@ -71,6 +121,7 @@ async function setSource(mode) {
     if (state.player && !state.paused) {
       try { await state.player.pause(); } catch {}
     }
+    if (live.ok) live.stop();
     state.source = 'local';
     paintSourceMode();
     if (fileAudio.current) {
@@ -245,6 +296,7 @@ function contextUriOf(track) {
 /** Play a context (album/playlist) or a list of uris — never both. */
 async function startPlayback(body) {
   if (!state.deviceId) return toast('Player is not ready yet');
+  shareTabAudio();
   const r = await api(`me/player/play?device_id=${state.deviceId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -532,6 +584,7 @@ $('#btn-play').onclick = async () => {
     return;
   }
   if (!state.player) return toast('Sign in first');
+  shareTabAudio();
   // Isolated `{ uris: [one] }` playback has no next track. If Spotify gave us
   // no album/playlist context, resume inside the album so Up next fills.
   if (state.paused && !state.context?.uri) {
@@ -631,9 +684,113 @@ prog.addEventListener('pointerup', (e) => {
 
 setInterval(() => {
   const info = $('#renderer-info');
-  if (!info) return;
-  info.textContent = `${viz.backend} · ${viz.fps} fps · ${viz.stats.frameMs.toFixed(1)} ms`;
+  if (info) info.textContent = `${viz.backend} · ${viz.fps} fps · ${viz.stats.frameMs.toFixed(1)} ms · ${Math.round(viz.stats.particles / 1000)}k`;
+  const fps = $('#fps');
+  if (fps) fps.textContent = `${viz.fps} fps`;
 }, 500);
+
+$('#btn-settings').onclick = () => $('#panel').classList.toggle('hidden');
+$('#btn-close-panel').onclick = () => $('#panel').classList.add('hidden');
+
+function bindSlider(id, labelId, fn, fmt) {
+  const el = $(id);
+  const out = $(labelId);
+  if (!el) return;
+  const apply = () => {
+    const n = Number(el.value);
+    if (out) out.textContent = fmt(n);
+    paintRange(el);
+    fn(n);
+  };
+  el.addEventListener('input', apply);
+  apply();
+}
+
+bindSlider('#s-count', '#v-count', (v) => {
+  if (v !== viz.particles.count) viz.setCount(v);
+}, (v) => `${Math.round(v / 1000)}k`);
+bindSlider('#s-size', '#v-size', (v) => viz.set('uSize', v), (v) => v.toFixed(1));
+bindSlider('#s-speed', '#v-speed', (v) => viz.set('uSpeed', v), (v) => v.toFixed(1));
+bindSlider('#s-sens', '#v-sens', (v) => viz.set('uSens', v), (v) => v.toFixed(1));
+bindSlider('#s-bloom', '#v-bloom', (v) => viz.set('uBloom', v), (v) => v.toFixed(2));
+bindSlider('#s-threshold', '#v-threshold', (v) => viz.set('uThreshold', v), (v) => v.toFixed(2));
+bindSlider('#s-gravity', '#v-gravity', (v) => viz.set('uGravity', v), (v) => v.toFixed(2));
+bindSlider('#s-life', '#v-life', (v) => viz.set('uLife', 1 / Math.max(0.4, v)), (v) => `${v.toFixed(1)}s`);
+bindSlider('#s-flow', '#v-flow', (v) => viz.set('uFlow', v), (v) => v.toFixed(1));
+bindSlider('#s-hue', '#v-hue', (v) => viz.set('uHue', v), (v) => `${Math.round(v * 360)}°`);
+$('#s-style')?.addEventListener('change', (event) => viz.set('uStyle', Number(event.target.value)));
+
+const panX = $('#s-pan-x');
+const panY = $('#s-pan-y');
+const applyPan = () => {
+  const x = Number(panX?.value || 0);
+  const y = Number(panY?.value || 0);
+  if ($('#v-pan-x')) $('#v-pan-x').textContent = x.toFixed(1);
+  if ($('#v-pan-y')) $('#v-pan-y').textContent = y.toFixed(1);
+  if (panX) paintRange(panX);
+  if (panY) paintRange(panY);
+  viz.pan(x, y);
+};
+panX?.addEventListener('input', applyPan);
+panY?.addEventListener('input', applyPan);
+$('#btn-reset-view')?.addEventListener('click', () => viz.resetView());
+viz.onViewChange = () => {
+  if (!panX || !panY) return;
+  panX.value = String(viz._panWanted.x);
+  panY.value = String(viz._panWanted.y);
+  applyPan();
+};
+
+
+function bindToggle(id, key) {
+  const btn = $(id);
+  if (!btn) return;
+  btn.onclick = () => {
+    const on = !btn.classList.contains('on');
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-checked', String(on));
+    viz.setToggle(key, on);
+  };
+}
+bindToggle('#t-particles', 'particles');
+bindToggle('#t-react', 'react');
+
+$('#t-live')?.addEventListener('click', () => shareOrStop());
+$('#btn-share-audio')?.addEventListener('click', () => shareOrStop());
+
+async function shareOrStop() {
+  if (state.source !== 'spotify') return;
+  if (live.ok) {
+    live.stop();
+    const hint = $('#device-hint');
+    if (hint) hint.textContent = 'Tab audio is off. Press Share tab audio, choose this tab, and tick “Share tab audio”.';
+    paintLiveToggle();
+    return;
+  }
+  await shareTabAudio();
+}
+
+const meter = $('#meter');
+const mctx = meter?.getContext('2d');
+function drawMeter() {
+  if (!meter || !mctx) return;
+  const w = meter.width;
+  const h = meter.height;
+  mctx.clearRect(0, 0, w, h);
+  const spec = viz.particles.spectrum;
+  const bars = 31;
+  const bw = w / bars;
+  for (let i = 0; i < bars; i++) {
+    const v = spec ? spec[i * 4] || 0 : 0;
+    const bh = Math.max(1, v * h);
+    const t = i / 30;
+    const hue = (1 - t) * 220;
+    mctx.fillStyle = `hsla(${hue}, 85%, ${48 + v * 20}%, 0.9)`;
+    mctx.fillRect(i * bw + 1, h - bh, Math.max(1, bw - 2), bh);
+  }
+  requestAnimationFrame(drawMeter);
+}
+drawMeter();
 
 paintSourceMode();
 paintLocalList();
