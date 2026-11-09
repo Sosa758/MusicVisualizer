@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="/styles.css?v=31" />
+<link rel="stylesheet" href="/styles.css?v=41" />
 </head>
 <body>
   <!-- GPU canvas sits behind everything -->
@@ -28,8 +28,10 @@
         <button id="mode-spotify" class="source-btn on" role="tab" aria-selected="true">Spotify</button>
         <button id="mode-local" class="source-btn" role="tab" aria-selected="false">Local file</button>
       </div>
+      <button id="btn-share-audio" class="ghost-btn" type="button">Share tab audio</button>
       <span id="status-pill" class="pill"><i></i><span>connecting</span></span>
       <button id="btn-login" class="ghost-btn hidden">Sign in with Spotify</button>
+      <button id="btn-settings" class="ghost-btn" title="Visualizer settings">Controls</button>
     </div>
   </header>
 
@@ -102,15 +104,104 @@
     </div>
   </section>
 
-  <!-- ─────────── Footer ─────────── -->
+  <aside id="panel" class="panel hidden">
+    <div class="panel-head">
+      <h2>31-band EQ</h2>
+      <button id="btn-close-panel" class="icon-btn" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <p class="hint">Thirty-one frequency bands drive each particle independently. For Spotify, share this tab with audio; local files connect directly.</p>
+    <div class="effect-block">
+      <label for="s-style">Particle formation</label>
+      <select id="s-style">
+        <option value="0">Prism · spectral columns</option>
+        <option value="1">Helix · kinetic ribbons</option>
+        <option value="2">Nebula · orbital disk</option>
+      </select>
+      <p class="effect-hint">Bass hits expand the formation; higher frequencies spark the edges.</p>
+    </div>
+    <div class="slider-block">
+      <label for="s-flow">motion flow <b id="v-flow" class="mono">1.0</b></label>
+      <input id="s-flow" type="range" min="0" max="3" step="0.05" value="1" />
+    </div>
+    <div class="slider-block">
+      <label for="s-hue">palette shift <b id="v-hue" class="mono">0°</b></label>
+      <input id="s-hue" type="range" min="0" max="1" step="0.01" value="0" />
+    </div>
+    <div class="slider-block">
+      <label for="s-pan-x">pan X <b id="v-pan-x" class="mono">0.0</b></label>
+      <input id="s-pan-x" type="range" min="-7" max="7" step="0.1" value="0" />
+    </div>
+    <div class="slider-block">
+      <label for="s-pan-y">pan Y <b id="v-pan-y" class="mono">0.0</b></label>
+      <input id="s-pan-y" type="range" min="-7" max="7" step="0.1" value="0" />
+    </div>
+    <button id="btn-reset-view" class="ghost-btn sm preset-save" type="button">Reset view</button>
+    <p class="effect-hint">Drag to orbit · right-drag or shift-drag to pan · scroll to zoom · double-click to reset.</p>
+
+    <div class="slider-block">
+      <label for="s-count">particles <b id="v-count" class="mono">100k</b></label>
+      <input id="s-count" type="range" min="20000" max="250000" step="10000" value="100000" />
+    </div>
+    <div class="slider-block">
+      <label for="s-size">particle size <b id="v-size" class="mono">1.0</b></label>
+      <input id="s-size" type="range" min="0.3" max="2.5" step="0.05" value="1" />
+    </div>
+    <div class="slider-block">
+      <label for="s-speed">speed <b id="v-speed" class="mono">1.0</b></label>
+      <input id="s-speed" type="range" min="0.2" max="3" step="0.05" value="1" />
+    </div>
+    <div class="slider-block">
+      <label for="s-sens">sensitivity <b id="v-sens" class="mono">1.2</b></label>
+      <input id="s-sens" type="range" min="0" max="3" step="0.05" value="1.2" />
+    </div>
+    <div class="slider-block">
+      <label for="s-bloom">bloom <b id="v-bloom" class="mono">0.65</b></label>
+      <input id="s-bloom" type="range" min="0" max="1.5" step="0.05" value="0.65" />
+    </div>
+    <div class="slider-block">
+      <label for="s-threshold">EQ threshold <b id="v-threshold" class="mono">0.18</b></label>
+      <input id="s-threshold" type="range" min="0" max="0.8" step="0.01" value="0.18" />
+    </div>
+    <div class="slider-block">
+      <label for="s-gravity">gravity <b id="v-gravity" class="mono">0.40</b></label>
+      <input id="s-gravity" type="range" min="0" max="3" step="0.05" value="0.4" />
+    </div>
+    <div class="slider-block">
+      <label for="s-life">lifetime <b id="v-life" class="mono">5.0s</b></label>
+      <input id="s-life" type="range" min="0.5" max="12" step="0.1" value="5" />
+    </div>
+
+    <div class="toggle-row">
+      <span>Particle system</span>
+      <button id="t-particles" class="switch on" role="switch" aria-checked="true"><i></i></button>
+    </div>
+    <div class="toggle-row">
+      <span>Audio-reactive</span>
+      <button id="t-react" class="switch on" role="switch" aria-checked="true"><i></i></button>
+    </div>
+    <div class="toggle-row">
+      <span>Live audio (this tab)</span>
+      <button id="t-live" class="switch" role="switch" aria-checked="false"><i></i></button>
+    </div>
+
+    <div class="meter-block">
+      <div class="meter-label"><span>31 bands</span><span id="fps" class="mono">— fps</span></div>
+      <canvas id="meter" width="280" height="56"></canvas>
+    </div>
+    <p class="hint" id="device-hint">Spotify plays in a separate frame. Turn on Live audio and share this tab with audio so the bars can hear it. Local files are read directly.</p>
+  </aside>
+
   <footer class="footer">
     <span class="mono" id="renderer-info">WebGL2</span>
     <span class="dot">·</span>
-    <span>Empty GPU scene</span>
+    <span>31-band particle EQ</span>
   </footer>
+  <video id="capture-sink" class="capture-sink" muted playsinline hidden></video>
   <div id="toast" class="toast hidden"></div>
 
   <script src="https://sdk.scdn.co/spotify-player.js"></script>
-  <script type="module" src="/app.js?v=31"></script>
+  <script type="module" src="/app.js?v=41"></script>
 </body>
 </html>

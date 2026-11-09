@@ -134,6 +134,7 @@ body{
 }
 .eq-hint{font-size:9.5px;color:var(--dim);line-height:1.4;margin-top:8px}
 .ghost-btn:active{transform:scale(.97)}
+#btn-share-audio.on{color:#c9f7d8;border-color:rgba(30,215,96,.45);background:rgba(30,215,96,.12)}
 #btn-login{background:var(--accent);color:#04140a;border-color:transparent;font-weight:500}
 #btn-login:hover{background:#25e96b}
 
