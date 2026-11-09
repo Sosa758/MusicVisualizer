@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Spotify Web Playback SDK player with GPU particle visualizer",
+  "description": "Spotify Web Playback SDK player with an empty WebGL scene",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",

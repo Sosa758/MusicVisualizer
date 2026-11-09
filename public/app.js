@@ -1,20 +1,10 @@
 /**
- * app.js — Spotify Web Playback SDK + local files + audio-reactive visualizer.
- *
- * Two playback sources:
- *   Spotify — SDK iframe is cross-origin, so particles need tab-audio capture
- *             (or a BPM beat-grid fallback).
- *   Local   — MP3/WAV/etc. through an <audio> element; AnalyserNode attaches
- *             directly, so particles follow the real waveform with no capture.
+ * app.js — Spotify Web Playback SDK + local files.
+ * The WebGL canvas is an empty scene. Playback does not drive it.
  */
-// The version query must match the one on the <script> tag in index.html.
-// Without it, browsers cache visualizer.js/rhythm.js independently of app.js
-// and a deploy silently keeps running stale modules.
 const V = new URL(import.meta.url).search;
 const { Visualizer } = await import(`./visualizer.js${V}`);
-const { RhythmEngine } = await import(`./rhythm.js${V}`);
-const { LiveAudio, FileAudio } = await import(`./audio.js${V}`);
-const { PRESETS } = await import(`./viz/presets.js${V}`);
+const { FileAudio } = await import(`./audio.js${V}`);
 
 const $ = (s) => document.querySelector(s);
 const api = (p, opts = {}) => fetch(`/api/spotify/${p}`, opts);
@@ -40,16 +30,8 @@ const state = {
 /* ───────────────────────── visualizer ───────────────────────── */
 
 const viz = new Visualizer($('#scene'));
-$('#renderer-info').textContent = viz.renderer.capabilities.isWebGL2 ? 'WebGL2 · GPU compute' : 'WebGL1';
+$('#renderer-info').textContent = viz.backend;
 
-/* ───────────────────────── audio analysis ───────────────────────── */
-
-const rhythm = new RhythmEngine();
-const live = new LiveAudio();
-live.onStop = () => {
-  paintLiveToggle();
-  setMeterMode();
-};
 const fileAudio = new FileAudio($('#local-audio'));
 fileAudio.setVolume(state.volume);
 fileAudio.onTrack = ({ track, paused, progressMs, durationMs }) => {
@@ -70,51 +52,6 @@ fileAudio.onEnded = () => {
   if (state.source === 'local') fileAudio.next();
 };
 
-const bands = { bass: 0, mid: 0, treble: 0, kick: 0, onset: 0 };
-const bpmCache = new Map();
-let bpmInFlight = '';
-let wantLiveAudio = true;
-
-function paintLiveToggle() {
-  const btn = $('#t-live');
-  if (!btn) return;
-  const on = state.source === 'spotify' && live.ok;
-  btn.classList.toggle('on', on);
-  btn.setAttribute('aria-checked', String(on));
-  btn.disabled = state.source === 'local';
-  btn.closest('.toggle-row')?.classList.toggle('dimmed', state.source === 'local');
-}
-
-function paintAudioMode() {
-  const pill = $('#audio-mode-pill');
-  const label = $('#audio-mode-label');
-  if (!pill || !label) return;
-  const isFile = state.source === 'local' && fileAudio.ready;
-  const isLive = state.source === 'spotify' && live.ok;
-  const liveLike = isFile || isLive;
-  pill.classList.toggle('live', liveLike);
-  pill.classList.toggle('beat', !liveLike);
-  if (isFile) {
-    label.textContent = 'Local FFT';
-    pill.title = 'Direct AnalyserNode on the audio file — particles follow the real waveform';
-  } else if (isLive) {
-    label.textContent = 'Live audio';
-    pill.title = 'Real FFT from this tab — particles follow the music across the spectrum';
-  } else {
-    label.textContent = 'Beat grid';
-    pill.title = 'BPM beat fallback — switch to Local file, or enable Live audio and share this tab';
-  }
-}
-
-function setMeterMode() {
-  const el = $('#meter-mode');
-  if (el) {
-    if (state.source === 'local' && fileAudio.ready) el.textContent = 'spectrum';
-    else el.textContent = live.ok ? 'spectrum' : 'beat';
-  }
-  paintAudioMode();
-}
-
 function paintSourceMode() {
   const spotify = state.source === 'spotify';
   $('#mode-spotify')?.classList.toggle('on', spotify);
@@ -125,14 +62,6 @@ function paintSourceMode() {
   $('#local-lists')?.classList.toggle('hidden', spotify);
   $('#btn-shuffle')?.classList.toggle('hidden', !spotify);
   $('#btn-repeat')?.classList.toggle('hidden', !spotify);
-  paintLiveToggle();
-  setMeterMode();
-  const hint = $('#device-hint');
-  if (hint) {
-    hint.textContent = spotify
-      ? 'Press play, share this tab, and tick “Share tab audio” so the particles hear Spotify — or switch to Local file for a direct FFT.'
-      : 'Add MP3/WAV/etc. and press play. Particles read the file directly — no tab capture needed.';
-  }
 }
 
 async function setSource(mode) {
@@ -142,7 +71,6 @@ async function setSource(mode) {
     if (state.player && !state.paused) {
       try { await state.player.pause(); } catch {}
     }
-    if (live.ok) live.stop();
     state.source = 'local';
     paintSourceMode();
     if (fileAudio.current) {
@@ -170,112 +98,6 @@ async function setSource(mode) {
   refreshQueue();
 }
 
-// 8-band EQ multipliers (in dB converted to gain: 10^(dB/20)).
-const eqGains = new Float32Array(8).fill(1.0);
-
-function bindEQ() {
-  const bands = ['sub', 'bass', 'lmid', 'mid', 'hmid', 'pres', 'treb', 'air'];
-  bands.forEach((b, idx) => {
-    const input = $(`#s-eq-${b}`);
-    const valDisplay = $(`#v-eq-${b}`);
-    if (!input) return;
-    input.addEventListener('input', () => {
-      const db = Number(input.value);
-      valDisplay.textContent = db > 0 ? `+${db}` : `${db}`;
-      eqGains[idx] = Math.pow(10, db / 20);
-    });
-  });
-
-  $('#btn-eq-reset')?.addEventListener('click', () => {
-    bands.forEach((b, idx) => {
-      const input = $(`#s-eq-${b}`);
-      const valDisplay = $(`#v-eq-${b}`);
-      if (input) input.value = '0';
-      if (valDisplay) valDisplay.textContent = '0';
-      eqGains[idx] = 1.0;
-    });
-  });
-}
-bindEQ();
-
-function applyEQToBands(raw) {
-  if (!raw) return raw;
-  // Apply 8-band EQ weighting to bass, mid, treble, and 12-zone spectrum
-  const subG = eqGains[0], bassG = eqGains[1], lmidG = eqGains[2], midG = eqGains[3];
-  const hmidG = eqGains[4], presG = eqGains[5], trebG = eqGains[6], airG = eqGains[7];
-
-  raw.bass = Math.min(1, raw.bass * ((subG + bassG) / 2));
-  raw.mid = Math.min(1, raw.mid * ((lmidG + midG + hmidG) / 3));
-  raw.treble = Math.min(1, raw.treble * ((presG + trebG + airG) / 3));
-
-  if (raw.spectrum) {
-    const spec = raw.spectrum;
-    const len = spec.length;
-    for (let i = 0; i < len; i++) {
-      const p = i / len;
-      let g = 1.0;
-      if (p < 0.125) g = subG;
-      else if (p < 0.25) g = bassG;
-      else if (p < 0.375) g = lmidG;
-      else if (p < 0.50) g = midG;
-      else if (p < 0.625) g = hmidG;
-      else if (p < 0.75) g = presG;
-      else if (p < 0.875) g = trebG;
-      else g = airG;
-      spec[i] = Math.min(1, spec[i] * g);
-    }
-  }
-  return raw;
-}
-
-viz.onAudioTick = (dt, t) => {
-  // Local files win: direct MediaElement FFT, no capture prompt.
-  if (state.source === 'local') {
-    const fileBands = fileAudio.tick();
-    if (fileBands) {
-      applyEQToBands(fileBands);
-      bands.bass = fileBands.bass;
-      bands.mid = fileBands.mid;
-      bands.treble = fileBands.treble;
-      bands.kick = fileBands.kick;
-      bands.onset = fileBands.onset;
-      bands.spectrum = fileAudio.spectrum;
-      return bands;
-    }
-  } else {
-    const real = live.tick();
-    if (real) {
-      applyEQToBands(real);
-      bands.bass = real.bass;
-      bands.mid = real.mid;
-      bands.treble = real.treble;
-      bands.kick = real.kick;
-      bands.onset = real.onset;
-      bands.spectrum = live.spectrum;
-      return bands;
-    }
-  }
-  const out = rhythm.tick(dt, performance.now());
-  applyEQToBands(out);
-  bands.bass = out.bass;
-  bands.mid = out.mid;
-  bands.treble = out.treble;
-  bands.kick = out.kick;
-  bands.onset = out.onset;
-  bands.spectrum = null;
-  return bands;
-};
-
-let liveStart = null;
-async function ensureLiveAudio() {
-  if (state.source !== 'spotify') return false;
-  if (!wantLiveAudio) return false;
-  if (live.ok) return true;
-  if (liveStart) return liveStart;
-  liveStart = startLiveAudio().finally(() => { liveStart = null; });
-  return liveStart;
-}
-
 function paintLocalList() {
   const ul = $('#local-list');
   if (!ul) return;
@@ -296,86 +118,6 @@ function paintLocalList() {
     li.onclick = () => fileAudio.playIndex(i);
     ul.appendChild(li);
   });
-}
-
-async function startLiveAudio() {
-  try {
-    await live.start();
-    paintLiveToggle();
-    setMeterMode();
-    const hint = $('#device-hint');
-    if (hint) hint.textContent = 'Listening to this tab — particles follow the real audio.';
-    return true;
-  } catch (e) {
-    paintLiveToggle();
-    setMeterMode();
-    const hint = $('#device-hint');
-    if (e.code === 'no-audio') {
-      toast('Tick “Share tab audio” in the browser prompt');
-      if (hint) hint.textContent = 'Share this tab and enable “Share tab audio” — that is how the visualizer hears the song.';
-    } else if (e.code === 'denied') {
-      if (hint) hint.textContent = 'Audio share cancelled. Particles fall back to a beat grid until you allow it.';
-    } else if (e.code === 'unsupported') {
-      toast('This browser cannot share tab audio');
-    }
-    return false;
-  }
-}
-
-function trackIdOf(track) {
-  return track?.id || (track?.uri || '').split(':').pop() || '';
-}
-
-async function lockBpm(track) {
-  if (!track) return;
-  const id = trackIdOf(track);
-  if (!id) return;
-  if (bpmCache.has(id)) {
-    rhythm.setBpm(bpmCache.get(id));
-    return;
-  }
-  // setTrack already applied a known tempo — don't round-trip Deezer for those.
-  if (rhythm.trackId === id && rhythm.bpm !== 120) {
-    bpmCache.set(id, rhythm.bpm);
-    return;
-  }
-  if (bpmInFlight === id) return;
-  bpmInFlight = id;
-
-  let isrc = track.external_ids?.isrc || '';
-  let artist = track.artists?.[0]?.name || '';
-  let title = track.name || '';
-  let duration = track.duration_ms || 0;
-
-  // SDK track objects have no ISRC. The Web API track does — that's the
-  // reliable key for "this exact recording" on Deezer.
-  try {
-    if (!isrc && id.length >= 22) {
-      const r = await api(`tracks/${id}`);
-      if (r.ok) {
-        const full = await r.json();
-        isrc = full.external_ids?.isrc || '';
-        artist = artist || full.artists?.[0]?.name || '';
-        title = title || full.name || '';
-        duration = duration || full.duration_ms || 0;
-      }
-    }
-    if (rhythm.trackId !== id) return;
-    if (!artist || !title) return;
-
-    const q = new URLSearchParams({ title, artist, duration: String(duration), isrc });
-    const r = await fetch(`/api/bpm?${q}`);
-    if (!r.ok || rhythm.trackId !== id) return;
-    const j = await r.json();
-    if (j?.bpm > 50 && j.bpm < 220 && rhythm.trackId === id) {
-      bpmCache.set(id, j.bpm);
-      rhythm.setBpm(j.bpm);
-    }
-  } catch (e) {
-    console.warn('[bpm]', e);
-  } finally {
-    if (bpmInFlight === id) bpmInFlight = '';
-  }
 }
 
 /* ───────────────────────── UI helpers ───────────────────────── */
@@ -503,7 +245,6 @@ function contextUriOf(track) {
 /** Play a context (album/playlist) or a list of uris — never both. */
 async function startPlayback(body) {
   if (!state.deviceId) return toast('Player is not ready yet');
-  ensureLiveAudio();
   const r = await api(`me/player/play?device_id=${state.deviceId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -515,7 +256,6 @@ async function startPlayback(body) {
     toast('Could not start playback');
     return false;
   }
-  rhythm.setPlaying(true);
   scheduleQueueRefresh(600);
   return true;
 }
@@ -540,10 +280,6 @@ function applyTrack(track, { progressMs, paused, context, shuffle, repeat } = {}
   if (context !== undefined) state.context = context;
   if (shuffle != null) state.shuffle = shuffle;
   if (repeat != null) state.repeat = repeat;
-  rhythm.setTrack(state.track);
-  lockBpm(state.track);
-  if (paused != null) rhythm.setPlaying(!paused);
-  if (progressMs != null) rhythm.setProgress(progressMs);
   renderTrack();
   renderProgress();
   renderPlayState();
@@ -796,7 +532,6 @@ $('#btn-play').onclick = async () => {
     return;
   }
   if (!state.player) return toast('Sign in first');
-  ensureLiveAudio();
   // Isolated `{ uris: [one] }` playback has no next track. If Spotify gave us
   // no album/playlist context, resume inside the album so Up next fills.
   if (state.paused && !state.context?.uri) {
@@ -890,209 +625,15 @@ prog.addEventListener('pointerup', (e) => {
     fileAudio.seek(ms);
   } else {
     state.player?.seek(ms);
-    rhythm.setProgress(ms);
   }
   state.lastTick = performance.now();
 });
 
-/* ───────────────────────── panel ───────────────────────── */
-
-$('#btn-settings').onclick = () => $('#panel').classList.toggle('hidden');
-$('#btn-close-panel').onclick = () => $('#panel').classList.add('hidden');
-
-function bindSlider(id, labelId, fn, fmtFn = (v) => v) {
-  const el = $(id);
-  const out = $(labelId);
-  const apply = () => {
-    out.textContent = fmtFn(el.value);
-    paintRange(el);
-    fn(Number(el.value));
-  };
-  el.addEventListener('input', apply);
-  apply();
-}
-
-bindSlider('#s-count', '#v-count', (v) => {
-  if (v === viz.particles.count) return;
-  viz.setCount(v);
-}, (v) => `${Math.round(v / 1000)}k`);
-
-bindSlider('#s-size', '#v-size', (v) => viz.setRender('uSize', v), (v) => Number(v).toFixed(1));
-bindSlider('#s-flow', '#v-flow', (v) => viz.setParam('uFlow', v), (v) => Number(v).toFixed(1));
-bindSlider('#s-bass', '#v-bass', (v) => viz.setRender('uBassSens', v), (v) => Number(v).toFixed(1));
-bindSlider('#s-bloom', '#v-bloom', (v) => viz.setRender('uBloom', v), (v) => Number(v).toFixed(1));
-
-// Shared with canvas#meter and Graphic EQ particles — keep them locked together.
-let eqThreshold = 0.28;
-function gateSpectrum(v, thr = eqThreshold) {
-  const t = Math.min(0.95, Math.max(0, thr));
-  if (v <= t) return 0;
-  // Map (threshold → 1) into (0 → ~0.9) so hot lows don't always pin the top.
-  return Math.min(0.9, ((v - t) / Math.max(0.2, 1 - t)) * 0.85);
-}
-bindSlider('#s-threshold', '#v-threshold', (v) => {
-  eqThreshold = v;
-  viz.setParam('uThreshold', v);
-  viz.setRender('uThreshold', v);
-}, (v) => Number(v).toFixed(2));
-
-const EFFECT_HINTS = [
-  'Balanced fluid motion. Every live frequency zone changes a different particle group.',
-  'Bass and kicks tighten the orbit; harmonics control altitude and color texture.',
-  'Mids shape vertical aurora curtains; bass anchors the cloud and highs add shimmer.',
-  'Treble and high-spectrum zones throw fast blue-white sparks; bass preserves the body.',
-  'Graphic equalizer locked to the same FFT as the meter. Raise EQ threshold if bars stay maxed out.',
-  'Particles stream out of a tunnel. Bass sets the speed, highs spin the outer rings.',
-];
-const effectSelect = $('#s-effect');
-function applyEffect() {
-  const effect = Number(effectSelect?.value || 0);
-  viz.setEffect(effect);
-  const hint = $('#effect-hint');
-  if (hint) hint.textContent = EFFECT_HINTS[effect] || EFFECT_HINTS[0];
-}
-effectSelect?.addEventListener('change', applyEffect);
-applyEffect();
-
-const presetSelect = $('#s-preset');
-const SAVED_KEY = 'viz-custom-preset';
-function rememberPreset(preset) {
-  if (!presetSelect || !preset?.id) return;
-  let opt = presetSelect.querySelector(`option[value="${preset.id}"]`);
-  if (!opt) {
-    opt = document.createElement('option');
-    opt.value = preset.id;
-    presetSelect.appendChild(opt);
-  }
-  opt.textContent = preset.name;
-  opt._preset = preset;
-}
-for (const preset of PRESETS) rememberPreset(preset);
-try {
-  const saved = JSON.parse(localStorage.getItem(SAVED_KEY) || 'null');
-  if (saved?.id) rememberPreset(saved);
-} catch {}
-
-function syncToggle(id, on) {
-  const btn = $(id);
-  if (!btn) return;
-  btn.classList.toggle('on', !!on);
-  btn.setAttribute('aria-checked', String(!!on));
-}
-
-function applyPreset(preset) {
-  if (!preset) return;
-  viz.applyPreset(preset);
-  if (effectSelect) effectSelect.value = String(preset.effect ?? 0);
-  const hint = $('#effect-hint');
-  if (hint) hint.textContent = preset.description || EFFECT_HINTS[preset.effect] || EFFECT_HINTS[0];
-  syncToggle('#t-particles', preset.particles !== false);
-  syncToggle('#t-vinyl', !!preset.vinyl);
-  const bloom = $('#s-bloom');
-  const bloomLabel = $('#v-bloom');
-  if (bloom && preset.bloom != null) {
-    bloom.value = String(preset.bloom);
-    if (bloomLabel) bloomLabel.textContent = Number(preset.bloom).toFixed(2);
-  }
-}
-
-presetSelect?.addEventListener('change', () => {
-  const opt = presetSelect.selectedOptions[0];
-  if (opt?._preset) applyPreset(opt._preset);
-});
-
-$('#s-quality')?.addEventListener('change', (e) => {
-  viz.setQuality(e.target.value);
-});
-
-$('#btn-save-preset')?.addEventListener('click', () => {
-  const snap = viz.capturePreset();
-  try { localStorage.setItem(SAVED_KEY, JSON.stringify(snap)); } catch {}
-  rememberPreset(snap);
-  if (presetSelect) presetSelect.value = snap.id;
-  const toast = $('#toast');
-  if (toast) {
-    toast.textContent = 'Saved the current look on this browser';
-    toast.classList.remove('hidden');
-    clearTimeout(applyPreset._toast);
-    applyPreset._toast = setTimeout(() => toast.classList.add('hidden'), 1800);
-  }
-});
-
-function bindToggle(id, key) {
-  const btn = $(id);
-  btn.onclick = () => {
-    const on = !btn.classList.contains('on');
-    btn.classList.toggle('on', on);
-    btn.setAttribute('aria-checked', String(on));
-    viz.setToggle(key, on);
-  };
-}
-bindToggle('#t-particles', 'particles');
-bindToggle('#t-vinyl', 'vinyl');
-bindToggle('#t-react', 'react');
-
-$('#t-live')?.addEventListener('click', async () => {
-  if (state.source === 'local') {
-    toast('Local file mode already has a direct FFT — tab capture is not needed');
-    return;
-  }
-  if (live.ok) {
-    wantLiveAudio = false;
-    live.stop();
-    paintLiveToggle();
-    setMeterMode();
-    const hint = $('#device-hint');
-    if (hint) hint.textContent = 'Live audio off — falling back to a beat grid.';
-    return;
-  }
-  wantLiveAudio = true;
-  await ensureLiveAudio();
-});
-
-/* spectrum meter */
-const meter = $('#meter');
-const mctx = meter.getContext('2d');
-function drawMeter() {
-  const w = meter.width, h = meter.height;
-  mctx.clearRect(0, 0, w, h);
-  const bars = 48;
-  const bw = w / bars;
-  const liveSpec = (state.source === 'local' && fileAudio.ready)
-    ? fileAudio.spectrum
-    : (live.ok ? live.spectrum : null);
-  for (let i = 0; i < bars; i++) {
-    const p = i / bars;
-    let v = liveSpec
-      ? liveSpec[i]
-      : p < 0.3 ? Math.max(bands.kick, bands.bass) : p < 0.65 ? bands.mid : bands.treble;
-    // EQ threshold gates this canvas the same way as the particle Graphic EQ.
-    if (liveSpec) v = gateSpectrum(v, eqThreshold);
-    const spread = liveSpec ? 1 : 0.82 + 0.18 * Math.sin(i * 0.9);
-    const bh = Math.max(1, v * h * spread);
-    const grad = mctx.createLinearGradient(0, h, 0, h - bh);
-    grad.addColorStop(0, 'rgba(30,215,96,.85)');
-    grad.addColorStop(1, 'rgba(140,120,255,.9)');
-    mctx.fillStyle = grad;
-    mctx.fillRect(i * bw + 1, h - bh, bw - 2, bh);
-  }
-  $('#fps').textContent = `${viz.fps} fps`;
+setInterval(() => {
   const info = $('#renderer-info');
-  if (info && viz.stats) {
-    const s = viz.stats;
-    const count = s.particles >= 1000 ? `${Math.round(s.particles / 1000)}k` : String(s.particles);
-    info.textContent = `${s.backend} · ${s.fps} fps · ${s.frameMs.toFixed(1)} ms · ${count} · ${s.preset}`;
-  }
-  const bpmEl = $('#bpm-label');
-  if (bpmEl) {
-    if (state.source === 'local' && fileAudio.ready) bpmEl.textContent = 'local';
-    else if (live.ok) bpmEl.textContent = 'live';
-    else bpmEl.textContent = rhythm.trackId ? `${Math.round(rhythm.bpm)} bpm` : '';
-  }
-  setMeterMode();
-  requestAnimationFrame(drawMeter);
-}
-drawMeter();
+  if (!info) return;
+  info.textContent = `${viz.backend} · ${viz.fps} fps · ${viz.stats.frameMs.toFixed(1)} ms`;
+}, 500);
 
 paintSourceMode();
 paintLocalList();
@@ -1194,7 +735,5 @@ boot();
 // expose for debugging in devtools
 window.__viz = viz;
 window.__state = state;
-window.__rhythm = rhythm;
-window.__live = live;
 window.__file = fileAudio;
 window.__refreshQueue = refreshQueue;

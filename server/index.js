@@ -120,62 +120,6 @@ async function validAccessToken() {
 /* ------------------------------------------------------------------ */
 app.get('/healthz', (_req, res) => res.json({ ok: true, configured: Boolean(CLIENT_ID && CLIENT_SECRET) }));
 
-// Tempo lookup — Spotify's audio-features API is 403 for this app. Deezer still
-// publishes BPM, which is what actually locks the particle grid to a track.
-const bpmCache = new Map();
-const usableBpm = (n) => {
-  const bpm = Number(n);
-  return bpm > 40 && bpm < 220 ? bpm : null;
-};
-
-async function deezerJson(url) {
-  const r = await fetch(url);
-  if (!r.ok) return null;
-  return r.json();
-}
-
-app.get('/api/bpm', async (req, res) => {
-  const isrc = String(req.query.isrc || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 16);
-  const title = String(req.query.title || '').slice(0, 120);
-  const artist = String(req.query.artist || '').slice(0, 80);
-  const duration = Number(req.query.duration) || 0;
-  const key = isrc || `${artist.toLowerCase()}|${title.toLowerCase()}`;
-  if (!key) return res.json({ bpm: null });
-  if (bpmCache.has(key)) return res.json(bpmCache.get(key));
-  try {
-    let bpm = null;
-    if (isrc) {
-      const full = await deezerJson(`https://api.deezer.com/track/isrc:${isrc}`);
-      bpm = usableBpm(full?.bpm);
-    }
-    if (bpm == null && title && artist) {
-      const q = new URLSearchParams({ q: `${title} ${artist}`, limit: '8' });
-      const j = await deezerJson(`https://api.deezer.com/search?${q}`);
-      const durSec = duration > 20 ? duration / 1000 : 0;
-      const artistLc = artist.toLowerCase();
-      const scored = [];
-      for (const t of j?.data || []) {
-        const an = (t.artist?.name || '').toLowerCase();
-        if (!an.includes(artistLc) && !artistLc.includes(an)) continue;
-        const dt = durSec ? Math.abs((t.duration || 0) - durSec) : 0;
-        scored.push({ id: t.id, dt });
-      }
-      scored.sort((a, b) => a.dt - b.dt);
-      for (const t of scored.slice(0, 5)) {
-        const full = await deezerJson(`https://api.deezer.com/track/${t.id}`);
-        bpm = usableBpm(full?.bpm);
-        if (bpm != null) break;
-      }
-    }
-    const out = { bpm };
-    if (bpm != null) bpmCache.set(key, out);
-    res.json(out);
-  } catch (e) {
-    console.warn('[bpm]', e);
-    res.json({ bpm: null });
-  }
-});
-
 app.get('/auth/login', (req, res) => {
   if (!CLIENT_ID || !CLIENT_SECRET) {
     return res.status(500).send('Spotify credentials missing. Fill in .env and restart.');

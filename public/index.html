@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="/styles.css?v=30" />
+<link rel="stylesheet" href="/styles.css?v=31" />
 </head>
 <body>
   <!-- GPU canvas sits behind everything -->
@@ -28,12 +28,8 @@
         <button id="mode-spotify" class="source-btn on" role="tab" aria-selected="true">Spotify</button>
         <button id="mode-local" class="source-btn" role="tab" aria-selected="false">Local file</button>
       </div>
-      <span id="audio-mode-pill" class="audio-mode-pill beat" title="Using BPM beat fallback until tab audio is shared">
-        <i></i><span id="audio-mode-label">Beat grid</span>
-      </span>
       <span id="status-pill" class="pill"><i></i><span>connecting</span></span>
       <button id="btn-login" class="ghost-btn hidden">Sign in with Spotify</button>
-      <button id="btn-settings" class="ghost-btn" title="Visualizer settings">Controls</button>
     </div>
   </header>
 
@@ -102,158 +98,19 @@
         <button id="btn-clear-files" class="ghost-btn sm">Clear</button>
       </div>
       <ul id="local-list"></ul>
-      <p class="local-hint">MP3, WAV, OGG, FLAC, M4A — particles read the file directly (no tab capture).</p>
+      <p class="local-hint">MP3, WAV, OGG, FLAC, M4A.</p>
     </div>
   </section>
-
-  <!-- ─────────── Controls drawer (right) ─────────── -->
-  <aside id="panel" class="panel hidden">
-    <div class="panel-head">
-      <h2>Visualizer</h2>
-      <button id="btn-close-panel" class="icon-btn" aria-label="Close">
-        <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
-      </button>
-    </div>
-
-    <div class="effect-block">
-      <label for="s-preset">Preset</label>
-      <select id="s-preset" aria-label="Visualizer preset">
-        <option value="">Current look</option>
-      </select>
-      <label for="s-quality">Quality</label>
-      <select id="s-quality" aria-label="Render quality">
-        <option value="performance">Performance</option>
-        <option value="high" selected>High</option>
-        <option value="ultra">Ultra</option>
-      </select>
-      <button id="btn-save-preset" class="ghost-btn sm preset-save" type="button">Save current look</button>
-    </div>
-
-    <div class="effect-block">
-      <label for="s-effect">Particle renderer</label>
-      <select id="s-effect" aria-label="Particle renderer effect">
-        <option value="0">Spectrum bloom — balanced</option>
-        <option value="1">Bass vortex — lows orbit</option>
-        <option value="2">Mid aurora — vocal waves</option>
-        <option value="3">Treble sparks — high detail</option>
-        <option value="4">Graphic EQ — spectrum bars</option>
-        <option value="5">Particle tunnel — fly-through</option>
-      </select>
-      <p id="effect-hint" class="effect-hint">Balanced fluid motion. Live frequency zones shape the particle cloud.</p>
-    </div>
-
-    <div class="slider-block">
-      <label for="s-count">particles <b id="v-count" class="mono">150k</b></label>
-      <input id="s-count" type="range" min="10000" max="400000" step="10000" value="150000" />
-    </div>
-    <div class="slider-block">
-      <label for="s-size">particle size <b id="v-size" class="mono">1.0</b></label>
-      <input id="s-size" type="range" min="0.2" max="3" step="0.1" value="1" />
-    </div>
-    <div class="slider-block">
-      <label for="s-flow">flow speed <b id="v-flow" class="mono">1.0</b></label>
-      <input id="s-flow" type="range" min="0" max="4" step="0.05" value="1" />
-    </div>
-    <div class="slider-block">
-      <label for="s-bass">bass sensitivity <b id="v-bass" class="mono">1.2</b></label>
-      <input id="s-bass" type="range" min="0" max="3" step="0.05" value="1.2" />
-    </div>
-    <div class="slider-block">
-      <label for="s-bloom">bloom <b id="v-bloom" class="mono">0.85</b></label>
-      <input id="s-bloom" type="range" min="0" max="2" step="0.05" value="0.85" />
-    </div>
-    <div class="slider-block">
-      <label for="s-threshold">EQ threshold <b id="v-threshold" class="mono">0.28</b></label>
-      <input id="s-threshold" type="range" min="0" max="0.9" step="0.01" value="0.28" />
-    </div>
-
-    <div class="toggle-row">
-      <span>Particle system</span>
-      <button id="t-particles" class="switch on" role="switch" aria-checked="true"><i></i></button>
-    </div>
-    <div class="toggle-row">
-      <span>Vinyl record</span>
-      <button id="t-vinyl" class="switch on" role="switch" aria-checked="true"><i></i></button>
-    </div>
-    <div class="toggle-row">
-      <span>Audio-reactive</span>
-      <button id="t-react" class="switch on" role="switch" aria-checked="true"><i></i></button>
-    </div>
-    <div class="toggle-row">
-      <span>Live audio (this tab)</span>
-      <button id="t-live" class="switch" role="switch" aria-checked="false"><i></i></button>
-    </div>
-
-    <div class="meter-block">
-      <div class="meter-label"><span><span id="meter-mode">spectrum</span> <b id="bpm-label" class="mono"></b></span><span id="fps" class="mono">— fps</span></div>
-      <canvas id="meter" width="240" height="56"></canvas>
-    </div>
-
-    <!-- Frequency Test Equalizer -->
-    <div class="eq-test-block">
-      <div class="eq-head">
-        <span>Graphic Equalizer Test</span>
-        <button id="btn-eq-reset" class="ghost-btn sm" title="Reset frequency offsets">Reset</button>
-      </div>
-      <div class="eq-sliders">
-        <div class="eq-col">
-          <span id="v-eq-sub" class="mono">0</span>
-          <input id="s-eq-sub" type="range" min="-10" max="10" step="1" value="0" orient="vertical" aria-label="Sub bass" />
-          <span class="eq-lbl">Sub</span>
-        </div>
-        <div class="eq-col">
-          <span id="v-eq-bass" class="mono">0</span>
-          <input id="s-eq-bass" type="range" min="-10" max="10" step="1" value="0" orient="vertical" aria-label="Bass" />
-          <span class="eq-lbl">Bass</span>
-        </div>
-        <div class="eq-col">
-          <span id="v-eq-lmid" class="mono">0</span>
-          <input id="s-eq-lmid" type="range" min="-10" max="10" step="1" value="0" orient="vertical" aria-label="Low mid" />
-          <span class="eq-lbl">L-Mid</span>
-        </div>
-        <div class="eq-col">
-          <span id="v-eq-mid" class="mono">0</span>
-          <input id="s-eq-mid" type="range" min="-10" max="10" step="1" value="0" orient="vertical" aria-label="Mid" />
-          <span class="eq-lbl">Mid</span>
-        </div>
-        <div class="eq-col">
-          <span id="v-eq-hmid" class="mono">0</span>
-          <input id="s-eq-hmid" type="range" min="-10" max="10" step="1" value="0" orient="vertical" aria-label="High mid" />
-          <span class="eq-lbl">H-Mid</span>
-        </div>
-        <div class="eq-col">
-          <span id="v-eq-pres" class="mono">0</span>
-          <input id="s-eq-pres" type="range" min="-10" max="10" step="1" value="0" orient="vertical" aria-label="Presence" />
-          <span class="eq-lbl">Pres</span>
-        </div>
-        <div class="eq-col">
-          <span id="v-eq-treb" class="mono">0</span>
-          <input id="s-eq-treb" type="range" min="-10" max="10" step="1" value="0" orient="vertical" aria-label="Treble" />
-          <span class="eq-lbl">Treb</span>
-        </div>
-        <div class="eq-col">
-          <span id="v-eq-air" class="mono">0</span>
-          <input id="s-eq-air" type="range" min="-10" max="10" step="1" value="0" orient="vertical" aria-label="Air" />
-          <span class="eq-lbl">Air</span>
-        </div>
-      </div>
-      <p class="eq-hint">Boost/cut frequency bands (-10 to +10 dB) to test GPU particle motion and spectrum meter reaction.</p>
-    </div>
-
-    <p class="hint" id="device-hint">Press play, share this tab, and tick “Share tab audio” so the particles hear the song — same idea as the old Windows Media Player visualizer.</p>
-  </aside>
 
   <!-- ─────────── Footer ─────────── -->
   <footer class="footer">
     <span class="mono" id="renderer-info">WebGL2</span>
     <span class="dot">·</span>
-    <span>GPU particles follow the playing audio</span>
+    <span>Empty GPU scene</span>
   </footer>
-
-  <video id="capture-sink" class="capture-sink" muted playsinline></video>
   <div id="toast" class="toast hidden"></div>
 
   <script src="https://sdk.scdn.co/spotify-player.js"></script>
-  <script type="module" src="/app.js?v=30"></script>
+  <script type="module" src="/app.js?v=31"></script>
 </body>
 </html>
